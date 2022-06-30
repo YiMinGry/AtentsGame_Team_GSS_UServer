@@ -13,11 +13,9 @@ using MySql.Data.MySqlClient;
 public class ServerClient
 {
     public TcpClient tcp;
-    public string clientName;
 
     public ServerClient(TcpClient clientSocket)
     {
-        clientName = "Guest";
         tcp = clientSocket;
     }
 }
@@ -105,8 +103,6 @@ public class Server : MonoBehaviour
                     string data = new StreamReader(s).ReadLine();
                     if (data != null)
                     {
-
-                        SetLog(data);
                         OnMessage(c, data);
                     }
                 }
@@ -115,7 +111,7 @@ public class Server : MonoBehaviour
 
         for (int i = 0; i < disconnectList.Count - 1; i++)
         {
-            Broadcast($"{disconnectList[i].clientName} 연결이 끊어졌습니다");
+            Broadcast($"{disconnectList[i].tcp} 연결이 끊어졌습니다");
 
             clients.Remove(disconnectList[i]);
             disconnectList.RemoveAt(i);
@@ -136,7 +132,9 @@ public class Server : MonoBehaviour
                 return true;
             }
             else
+            {
                 return false;
+            }
         }
         catch
         {
@@ -170,11 +168,12 @@ public class Server : MonoBehaviour
         {
             case "ssEnter":
                 {
+                    string _ssid = Guid.NewGuid().ToString();
                     if (FindUserInfo(json2["ID"].ToString()) == true)
                     { //기존 유저인지 체크
 
                         SetLog("기존 유저 접속 " + json2["ID"].ToString() + "\n");
-                        UserSSIDUpdate(json2["ID"].ToString(), c.clientName);
+                        UserSSIDUpdate(json2["ID"].ToString(), _ssid);
 
                     }
                     else
@@ -182,7 +181,7 @@ public class Server : MonoBehaviour
                       //유저 디비에 추가하고
                         SetLog("신규 유저 접속 " + json2["ID"].ToString() + "\n");
 
-                        json2.Add("ssID", c.clientName);
+                        json2.Add("ssID", _ssid);
                         UserInsert(json2);
 
                     }
@@ -195,7 +194,7 @@ public class Server : MonoBehaviour
                         JObject SetUserNickNameData = new JObject();
                         SetUserNickNameData.Add("cmd", "SetUserNickName");
                         SetUserNickNameData.Add("retMsg", "닉네임을 설정해주세요");
-                        SetUserNickNameData.Add("ssID", c.clientName);
+                        SetUserNickNameData.Add("ssID", _ssid);
                         SetUserNickNameData.Add("ID", json2["ID"].ToString());
 
                         Send(SetUserNickNameData.ToString(), c);
@@ -251,6 +250,15 @@ public class Server : MonoBehaviour
                     }
                 }
                 break;
+            case "TotalRanking":
+                {
+                    JObject _nCmd = new JObject();
+                    _nCmd.Add("cmd", "TotalRanking");
+                    JArray rktmp = TotalRank();
+                    _nCmd.Add("Top10", rktmp);
+                    Send(_nCmd.ToString(), c);
+                }
+                break;
             case "ReadRanking":
                 {
                     JObject _nCmd = new JObject();
@@ -263,7 +271,7 @@ public class Server : MonoBehaviour
                 break;
             case "UpdateRanking":
                 {
-                    if (GetMG1MyRank(json2["MG_NAME"].ToString(), json2["ID"].ToString()).Count > 0) //내 정보가 이미 있을때
+                    if (GetMG1MyScore(json2["MG_NAME"].ToString(), json2["ID"].ToString()).Count > 0) //내 정보가 이미 있을때
                     { //랭킹 점수 업데이트
                         MGRankUpdate(json2["MG_NAME"].ToString(), json2);
                     }
@@ -276,7 +284,7 @@ public class Server : MonoBehaviour
                     _nCmd.Add("cmd", "UpdateRanking");
 
                     JArray allRankArr = GetMG1TopTRank(json2["MG_NAME"].ToString());
-                    JObject myRkData = GetMG1MyRank(json2["MG_NAME"].ToString(), json2["ID"].ToString());
+                    JObject myRkData = GetMG1MyScore(json2["MG_NAME"].ToString(), json2["ID"].ToString());
                     int rankIdx = -1;
 
                     for (int i = 0; i < allRankArr.Count; i++)
@@ -544,15 +552,57 @@ public class Server : MonoBehaviour
 
     }
 
+
+    JArray TotalRank()
+    {
+        JArray ret = new JArray();
+
+        try
+        {
+            string _query = string.Format($"select ID, nickName, MG_1_Score + MG_2_Score+ MG_3_Score+ MG_4_Score+ MG_5_Score as MG_Total_Score, dense_rank() over (order by  MG_1_Score + MG_2_Score+ MG_3_Score+ MG_4_Score+ MG_5_Score desc) as MG_Total_Rank from ranktable;");
+
+            MySqlDataReader table = GetDataReader(_query);
+
+
+            JArray rankArr = new JArray();
+
+            JObject cmdTmp = new JObject();
+
+            while (table.Read())
+            {
+                if (rankArr.Count < 10)//최대 열개만 나오게
+                {
+                    JObject rkData = new JObject();
+                    rkData.Add("ID", table["ID"].ToString());
+                    rkData.Add("nickName", table["nickName"].ToString());
+                    rkData.Add("MG_Total_Score", table["MG_Total_Score"].ToString());
+                    rkData.Add("MG_Total_Rank", table["MG_Total_Rank"].ToString());
+
+                    rankArr.Add(rkData);
+                }
+            }
+
+            ret = rankArr;
+
+            table.Close();
+        }
+        catch (Exception exc)
+        {
+            SetLog("TotalRank !!!!!" + exc.Message);
+        }
+
+        return ret;
+    }
+
     //미니게임 랭킹 가져오기
-    private JArray GetMG1TopTRank(string _tableName)
+    private JArray GetMG1TopTRank(string _gameName)
     {
 
         JArray ret = new JArray();
 
         try
         {
-            string _query = string.Format($"select ID, nickName, Score, dense_rank() over (order by Score desc) as ranking from {_tableName};");
+            string _query = string.Format($"select ID, nickName, {_gameName}_Score, dense_rank() over (order by {_gameName}_Score desc) as {_gameName}_Rank from ranktable;");
 
             MySqlDataReader table = GetDataReader(_query);
 
@@ -567,8 +617,8 @@ public class Server : MonoBehaviour
                     JObject rkData = new JObject();
                     rkData.Add("ID", table["ID"].ToString());
                     rkData.Add("nickName", table["nickName"].ToString());
-                    rkData.Add("Score", table["Score"].ToString());
-                    rkData.Add("ranking", table["ranking"].ToString());
+                    rkData.Add($"Score", table[$"{_gameName}_Score"].ToString());
+                    rkData.Add($"Rank", table[$"{_gameName}_Rank"].ToString());
 
                     rankArr.Add(rkData);
                 }
@@ -585,15 +635,15 @@ public class Server : MonoBehaviour
 
         return ret;
     }
-    //내 미니게임 랭킹 가져오기
-    private JObject GetMG1MyRank(string _tableName, string _id)
+    //내 미니게임 점수 가져오기
+    private JObject GetMG1MyScore(string _gameName, string _id)
     {
 
         JObject ret = new JObject();
 
         try
         {
-            string _query = string.Format($"SELECT * FROM {_tableName};");
+            string _query = string.Format($"SELECT * FROM ranktable;");
             MySqlDataReader table = GetDataReader(_query);
 
             while (table.Read())
@@ -603,7 +653,7 @@ public class Server : MonoBehaviour
                     ret.Add("msg", "요청한 유저의 랭킹");
                     ret.Add("ID", table["ID"].ToString());
                     ret.Add("nickName", table["nickName"].ToString());
-                    ret.Add("Score", table["Score"].ToString());
+                    ret.Add($"Score", table[$"{_gameName}_Score"].ToString());
                     break;
                 }
             }
@@ -618,11 +668,11 @@ public class Server : MonoBehaviour
         return ret;
     }
     //미니게임 랭킹 추가
-    public void MGRankInsert(string _tableName, JObject _data)
+    public void MGRankInsert(string _gameName, JObject _data)
     {
         try
         {
-            string _query = string.Format($"INSERT IGNORE INTO {_tableName} (ID, nickName, Score) VALUES ('{_data["ID"].ToString()}','{_data["nickName"].ToString()}','{_data["Score"].ToString()}');");
+            string _query = string.Format($"INSERT IGNORE INTO ranktable (ID, nickName, {_gameName}_Score) VALUES ('{_data["ID"].ToString()}','{_data["nickName"].ToString()}','{_data["Score"].ToString()}');");
 
             MySqlCommand command = GetCommand(_query);
         }
@@ -634,11 +684,11 @@ public class Server : MonoBehaviour
 
     }
     //미니게임 랭킹 업데이트
-    private void MGRankUpdate(string _tableName, JObject _data)
+    private void MGRankUpdate(string _gameName, JObject _data)
     {
         try
         {
-            string _query = string.Format($"UPDATE {_tableName} SET Score='{_data["Score"].ToString()}' WHERE ID='{_data["ID"].ToString()}';");
+            string _query = string.Format($"UPDATE ranktable SET {_gameName}_Score='{_data["Score"].ToString()}' WHERE ID='{_data["ID"].ToString()}';");
 
             MySqlCommand command = GetCommand(_query);
         }
