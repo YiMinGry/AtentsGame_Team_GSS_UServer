@@ -271,14 +271,14 @@ public class Server : MonoBehaviour
                 break;
             case "UpdateRanking":
                 {
-                    if (GetMG1MyScore(json2["MG_NAME"].ToString(), json2["ID"].ToString()).Count > 0) //내 정보가 이미 있을때
-                    { //랭킹 점수 업데이트
-                        MGRankUpdate(json2["MG_NAME"].ToString(), json2);
-                    }
-                    else
-                    {//랭킹 추가
+                    if (!(GetMG1MyScore(json2["MG_NAME"].ToString(), json2["ID"].ToString()).Count > 0))
+                    {
                         MGRankInsert(json2["MG_NAME"].ToString(), json2);
                     }
+
+                    //랭킹 점수 업데이트
+                    MGRankUpdate(json2["MG_NAME"].ToString(), json2);
+
 
                     JObject _nCmd = new JObject();
                     _nCmd.Add("cmd", "UpdateRanking");
@@ -672,7 +672,7 @@ public class Server : MonoBehaviour
     {
         try
         {
-            string _query = string.Format($"INSERT IGNORE INTO ranktable (ID, nickName, {_gameName}_Score) VALUES ('{_data["ID"].ToString()}','{_data["nickName"].ToString()}','{_data["Score"].ToString()}');");
+            string _query = string.Format($"INSERT IGNORE INTO ranktable (ID, nickName, MG_1_Score, MG_2_Score, MG_3_Score, MG_4_Score, MG_5_Score) VALUES ('{_data["ID"].ToString()}','{_data["nickName"].ToString()}','0','0','0','0','0');");
 
             MySqlCommand command = GetCommand(_query);
         }
