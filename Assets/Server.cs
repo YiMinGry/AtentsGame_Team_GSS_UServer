@@ -32,6 +32,12 @@ public class Server : MonoBehaviour
         public string coin2;
     }
 
+    public struct MFData
+    {
+        public int idx;
+        public int choice;//0미착용 1착용
+    }
+
     public InputField portField;
     public Text serverIP;
 
@@ -202,10 +208,12 @@ public class Server : MonoBehaviour
                         return;
                     }
 
-
                     //닉네임까지 이상 없을경우 유저 데이터 클라로 넘겨주기
                     userData _info = new userData();
                     _info = GetUserInfo(json2["ID"].ToString());
+
+
+
 
                     JObject _userData = new JObject();
                     _userData.Add("cmd", "LoginOK");
@@ -216,6 +224,7 @@ public class Server : MonoBehaviour
                     _userData.Add("nickName", _info.nickName);
                     _userData.Add("coin1", _info.coin1);
                     _userData.Add("coin2", _info.coin2);
+                    _userData.Add("MFList", GetAllMFInfo(_info.ID));
                     SetLog("기존 유저 접속 " + _userData.ToString() + "\n");
 
                     Send(_userData.ToString(), c);
@@ -244,6 +253,8 @@ public class Server : MonoBehaviour
                         _userData.Add("nickName", _info.nickName);
                         _userData.Add("coin1", _info.coin1);
                         _userData.Add("coin2", _info.coin2);
+                        _userData.Add("MFList", GetAllMFInfo(_info.ID));
+
                         SetLog("기존 유저 접속 " + _userData.ToString() + "\n");
 
                         Send(_userData.ToString(), c);
@@ -275,9 +286,19 @@ public class Server : MonoBehaviour
                     {
                         MGRankInsert(json2["MG_NAME"].ToString(), json2);
                     }
+                    else
+                    {
 
-                    //랭킹 점수 업데이트
-                    MGRankUpdate(json2["MG_NAME"].ToString(), json2);
+                        JObject _score = GetMG1MyScore(json2["MG_NAME"].ToString(), json2["ID"].ToString());
+
+                        if (int.Parse(_score["Score"].ToString()) > int.Parse(json2["Score"].ToString()))
+                        {
+                            //랭킹 점수 업데이트
+                            MGRankUpdate(json2["MG_NAME"].ToString(), json2);
+
+                        }
+                    }
+
 
 
                     JObject _nCmd = new JObject();
@@ -309,6 +330,19 @@ public class Server : MonoBehaviour
                     Broadcast(json2.ToString());
                 }
                 break;
+            case "MFStateChange":
+                {
+                    //MFIdx 미니친구 인덱스
+                    //MFState 미니친구 상태정보 0:미소유 1:소유 2:착용
+                    MFAdd(json2["ID"].ToString(), json2["MFIdx"].ToString(), json2["MFState"].ToString());
+
+                    JObject ret = FindMFInfo(json2["ID"].ToString(), int.Parse(json2["MFIdx"].ToString()));
+                    ret.Add("cmd", "MFStateChange");
+                    ret.Add("ID", json2["ID"].ToString());
+                    Send(ret.ToString(), c);
+                }
+                break;
+
             case "원하는기능":
                 {
 
@@ -446,7 +480,6 @@ public class Server : MonoBehaviour
                     _info.nickName = table["nickName"].ToString();
                     _info.coin1 = table["coin1"].ToString();
                     _info.coin2 = table["coin2"].ToString();
-
                     return _info;
                 }
             }
@@ -480,6 +513,9 @@ public class Server : MonoBehaviour
                 string _query = string.Format($"INSERT IGNORE INTO {_infoTable} (ssID, ID, nickName,coin1, coin2) VALUES ('{_data["ssID"].ToString()}','{_data["ID"].ToString()}','{""}','{1000}','{10}');");
                 MySqlCommand command = GetCommand(_query);
 
+
+                UserMFInsert(_data);
+
                 ret = true;
             }
             catch (Exception exc)
@@ -490,6 +526,22 @@ public class Server : MonoBehaviour
             }
         }
         return ret;
+    }
+
+    public void UserMFInsert(JObject _data)
+    {
+
+        try
+        {
+            string _query = string.Format($"INSERT IGNORE INTO mflist (ID) VALUES ('{_data["ID"].ToString()}');");
+            MySqlCommand command = GetCommand(_query);
+
+        }
+        catch (Exception exc)
+        {
+
+            SetLog("UserInsert !!!!!" + exc.Message);
+        }
 
     }
     // 유저닉네임 체크
@@ -552,6 +604,87 @@ public class Server : MonoBehaviour
 
     }
 
+    //모든 미니친구 정보
+    private JObject GetAllMFInfo(string _id)
+    {
+        JObject _list = new JObject();
+        try
+        {
+            string _query = string.Format($"SELECT * FROM mflist");
+
+            MySqlDataReader table = GetDataReader(_query);
+            while (table.Read())
+            {
+                if (_id.Equals(table["ID"].ToString()))
+                {
+                    for (int i = 0; i < 36; i++)
+                    {
+                        _list.Add("friend_" + i, table["friend_" + i].ToString());
+                    }
+
+                    break;
+                }
+            }
+
+            table.Close();
+        }
+        catch (Exception exc)
+        {
+            SetLog("GetMG1TopTRank !!!!!" + exc.Message);
+        }
+
+        return _list;
+    }
+
+    private JObject FindMFInfo(string _id, int _idx)
+    {
+        JObject _list = new JObject();
+
+        try
+        {
+            string _query = string.Format($"SELECT * FROM mflist");
+
+            MySqlDataReader table = GetDataReader(_query);
+            while (table.Read())
+            {
+                if (_id.Equals(table["ID"].ToString()))
+                {
+                    for (int i = 0; i < 36; i++)
+                    {
+                        if (i == _idx)
+                        {
+                            _list.Add("MFIdx", i);
+                            _list.Add("MFState", table["friend_" + i].ToString());
+                            break;
+                        }
+                    }
+
+                }
+            }
+
+            table.Close();
+        }
+        catch (Exception exc)
+        {
+            SetLog("GetMG1TopTRank !!!!!" + exc.Message);
+        }
+
+        return _list;
+    }
+
+    //미니친구 정보 수정
+    private void MFAdd(string _id, string _mfIdx, string _mfState)
+    {
+        try
+        {
+            string _query = string.Format($"UPDATE mflist SET friend_{_mfIdx} = '{_mfState}' WHERE ID = '{_id}';");
+            MySqlCommand command = GetCommand(_query);
+        }
+        catch (Exception exc)
+        {
+            SetLog("MFAdd !!!!!" + exc.Message);
+        }
+    }
 
     JArray TotalRank()
     {
