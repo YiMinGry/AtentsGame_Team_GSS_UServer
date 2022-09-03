@@ -267,6 +267,9 @@ public class Server : MonoBehaviour
                     _nCmd.Add("cmd", "TotalRanking");
                     JArray rktmp = TotalRank();
                     _nCmd.Add("Top10", rktmp);
+                    JObject _myRank = TotalMyRank(json2["ID"].ToString());
+                    _nCmd.Add("MyRank", _myRank);
+
                     Send(_nCmd.ToString(), c);
                 }
                 break;
@@ -276,6 +279,20 @@ public class Server : MonoBehaviour
                     _nCmd.Add("cmd", "ReadRanking");
                     JArray rktmp = GetMG1TopTRank(json2["MG_NAME"].ToString());
                     _nCmd.Add("Top10", rktmp);
+
+                    JObject myRkData = GetMG1MyScore(json2["MG_NAME"].ToString(), json2["ID"].ToString());
+                    int rankIdx = -1;
+
+                    for (int i = 0; i < rktmp.Count; i++)
+                    {
+                        if (rktmp[i]["ID"].ToString().Equals(json2["ID"].ToString()))
+                        {
+                            rankIdx = i + 1;
+                        }
+                    }
+
+                    myRkData.Add("ranking", rankIdx);
+                    _nCmd.Add("myRkData", myRkData);
                     Send(_nCmd.ToString(), c);
                 }
 
@@ -291,7 +308,7 @@ public class Server : MonoBehaviour
 
                         JObject _score = GetMG1MyScore(json2["MG_NAME"].ToString(), json2["ID"].ToString());
 
-                        if (int.Parse(_score["Score"].ToString()) > int.Parse(json2["Score"].ToString()))
+                        if (int.Parse(_score["Score"].ToString()) < int.Parse(json2["Score"].ToString()))
                         {
                             //랭킹 점수 업데이트
                             MGRankUpdate(json2["MG_NAME"].ToString(), json2);
@@ -340,6 +357,24 @@ public class Server : MonoBehaviour
                     ret.Add("cmd", "MFStateChange");
                     ret.Add("ID", json2["ID"].ToString());
                     Send(ret.ToString(), c);
+                }
+                break;
+
+            case "UserCoinUpdate":
+                {
+                    UserCoinUpdate(json2["CoinIdx"].ToString(), json2);
+
+                    userData _info = new userData();
+                    _info = GetUserInfo(json2["ID"].ToString());
+
+                    JObject _userData = new JObject();
+                    _userData.Add("cmd", "UserCoinUpdate");
+                    _userData.Add("ID", _info.ID);
+                    _userData.Add("nickName", _info.nickName);
+                    _userData.Add("coin1", _info.coin1);
+                    _userData.Add("coin2", _info.coin2);
+                    Send(_userData.ToString(), c);
+
                 }
                 break;
 
@@ -727,6 +762,39 @@ public class Server : MonoBehaviour
         return ret;
     }
 
+    JObject TotalMyRank(string _id)
+    {
+        JObject cmdTmp = new JObject();
+
+        try
+        {
+            string _query = string.Format($"select ID, nickName, MG_1_Score + MG_2_Score+ MG_3_Score+ MG_4_Score+ MG_5_Score as MG_Total_Score, dense_rank() over (order by  MG_1_Score + MG_2_Score+ MG_3_Score+ MG_4_Score+ MG_5_Score desc) as MG_Total_Rank from ranktable;");
+
+            MySqlDataReader table = GetDataReader(_query);
+
+            while (table.Read())
+            {
+                if (_id.Equals(table["ID"].ToString()))
+                {
+                    cmdTmp.Add("ID", table["ID"].ToString());
+                    cmdTmp.Add("nickName", table["nickName"].ToString());
+                    cmdTmp.Add("MG_Total_Score", table["MG_Total_Score"].ToString());
+                    cmdTmp.Add("MG_Total_Rank", table["MG_Total_Rank"].ToString());
+
+                    break;
+                }
+            }
+
+            table.Close();
+        }
+        catch (Exception exc)
+        {
+            SetLog("TotalRank !!!!!" + exc.Message);
+        }
+
+        return cmdTmp;
+    }
+
     //미니게임 랭킹 가져오기
     private JArray GetMG1TopTRank(string _gameName)
     {
@@ -822,6 +890,20 @@ public class Server : MonoBehaviour
         try
         {
             string _query = string.Format($"UPDATE ranktable SET {_gameName}_Score='{_data["Score"].ToString()}' WHERE ID='{_data["ID"].ToString()}';");
+
+            MySqlCommand command = GetCommand(_query);
+        }
+        catch (Exception exc)
+        {
+            SetLog("MGRankUpdate !!!!!" + exc.Message);
+        }
+    }
+
+    private void UserCoinUpdate(string _coinIdx, JObject _data)
+    {
+        try
+        {
+            string _query = string.Format($"UPDATE {_infoTable} SET {_coinIdx}='{_data[_coinIdx].ToString()}' WHERE ID='{_data["ID"].ToString()}';");
 
             MySqlCommand command = GetCommand(_query);
         }
