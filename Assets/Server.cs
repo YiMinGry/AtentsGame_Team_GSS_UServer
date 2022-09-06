@@ -22,6 +22,13 @@ public class ServerClient
 
 public class Server : MonoBehaviour
 {
+    public struct MGPlayData
+    {
+        public bool _is1st;
+        public int _maxScore;
+        public int _playCount;
+
+    }
     public struct userData
     {
         public string idx;
@@ -30,12 +37,12 @@ public class Server : MonoBehaviour
         public string nickName;
         public string coin1;
         public string coin2;
-    }
 
-    public struct MFData
-    {
-        public int idx;
-        public int choice;//0미착용 1착용
+        public MGPlayData MG1PlayData;
+        public MGPlayData MG2PlayData;
+        public MGPlayData MG3PlayData;
+        public MGPlayData MG4PlayData;
+        public MGPlayData MG5PlayData;
     }
 
     public InputField portField;
@@ -50,11 +57,18 @@ public class Server : MonoBehaviour
 
     private void Awake()
     {
+        Screen.SetResolution(500, 500, false);
+
         String strHostName = string.Empty;
         IPHostEntry ipEntry = Dns.GetHostEntry(Dns.GetHostName());
         IPAddress[] addr = ipEntry.AddressList;
 
         serverIP.text = ($"IP Address : {addr[1].ToString()} ");
+
+        _connectionAddress = string.Format("Server={0};Port={1};Database={2};Uid={3};Pwd={4}", _server, _port, _database, _id, _pw);
+        SetLog("DB세팅..");
+
+        ServerCreate();
     }
     public void SetLog(string msg)
     {
@@ -63,16 +77,13 @@ public class Server : MonoBehaviour
 
     public void ServerCreate()
     {
-        _connectionAddress = string.Format("Server={0};Port={1};Database={2};Uid={3};Pwd={4}", _server, _port, _database, _id, _pw);
-        SetLog("DB세팅..");
-
 
         clients = new List<ServerClient>();
         disconnectList = new List<ServerClient>();
 
         try
         {
-            int _port = int.Parse(portField.text);
+            int _port = 5641;//int.Parse(portField.text);
 
             server = new TcpListener(IPAddress.Any, _port);
             server.Start();
@@ -80,6 +91,21 @@ public class Server : MonoBehaviour
             StartListening();
             serverStarted = true;
             SetLog("서버시작");
+        }
+        catch (Exception e)
+        {
+            SetLog(e.Message);
+        }
+    }
+
+    void OnApplicationQuit()
+    {
+        try
+        {
+            if (server != null)
+            {
+                server.Stop();
+            }
         }
         catch (Exception e)
         {
@@ -212,9 +238,6 @@ public class Server : MonoBehaviour
                     userData _info = new userData();
                     _info = GetUserInfo(json2["ID"].ToString());
 
-
-
-
                     JObject _userData = new JObject();
                     _userData.Add("cmd", "LoginOK");
                     _userData.Add("retMsg", "로그인에 성공했습니다.");
@@ -224,18 +247,22 @@ public class Server : MonoBehaviour
                     _userData.Add("nickName", _info.nickName);
                     _userData.Add("coin1", _info.coin1);
                     _userData.Add("coin2", _info.coin2);
+
+                    _userData.Add("MGData", MGDataLoad(_info));
+
                     _userData.Add("MFList", GetAllMFInfo(_info.ID));
+                    _userData.Add("ArchiveList", LoadArchive(_info.ID));
+
                     SetLog("기존 유저 접속 " + _userData.ToString() + "\n");
 
                     Send(_userData.ToString(), c);
-
                 }
                 break;
             case "SetUserNickName":
                 {
                     if (FindUserInfo(json2["ID"].ToString()) == true)
                     {
-                        UserNinameUpdate(json2["ID"].ToString(), json2["nickName"].ToString());
+                        UserNicknameUpdate(json2["ID"].ToString(), json2["nickName"].ToString());
                     }
 
                     if (CheckUserNickName(json2["ID"].ToString()) == true)
@@ -253,12 +280,38 @@ public class Server : MonoBehaviour
                         _userData.Add("nickName", _info.nickName);
                         _userData.Add("coin1", _info.coin1);
                         _userData.Add("coin2", _info.coin2);
+
+                        _userData.Add("MGData", MGDataLoad(_info));
+
+
                         _userData.Add("MFList", GetAllMFInfo(_info.ID));
+                        _userData.Add("ArchiveList", LoadArchive(_info.ID));
 
                         SetLog("기존 유저 접속 " + _userData.ToString() + "\n");
 
                         Send(_userData.ToString(), c);
                     }
+                }
+                break;
+            case "RefreshUserInfo":
+                {
+                    userData _info = new userData();
+                    _info = GetUserInfo(json2["ID"].ToString());
+
+                    JObject _userData = new JObject();
+                    _userData.Add("cmd", "LoginOK");
+                    _userData.Add("retMsg", "Refresh");
+                    _userData.Add("idx", _info.idx);
+                    _userData.Add("ssID", _info.ssID);
+                    _userData.Add("ID", _info.ID);
+                    _userData.Add("nickName", _info.nickName);
+                    _userData.Add("coin1", _info.coin1);
+                    _userData.Add("coin2", _info.coin2);
+                    _userData.Add("MGData", MGDataLoad(_info));
+                    _userData.Add("MFList", GetAllMFInfo(_info.ID));
+                    _userData.Add("ArchiveList", LoadArchive(_info.ID));
+
+                    Send(_userData.ToString(), c);
                 }
                 break;
             case "TotalRanking":
@@ -277,6 +330,7 @@ public class Server : MonoBehaviour
                 {
                     JObject _nCmd = new JObject();
                     _nCmd.Add("cmd", "ReadRanking");
+
                     JArray rktmp = GetMG1TopTRank(json2["MG_NAME"].ToString());
                     _nCmd.Add("Top10", rktmp);
 
@@ -297,8 +351,41 @@ public class Server : MonoBehaviour
                 }
 
                 break;
+            case "ReadMyAllRanking":
+                {
+                    JObject _nCmd = new JObject();
+                    _nCmd.Add("cmd", "ReadMyAllRanking");
+
+
+                    for (int i = 1; i < 6; i++)
+                    {
+
+                        JArray rktmp = GetMG1TopTRank("MG_" + i);
+                        JObject myRkData = GetMG1MyScore("MG_" + i, json2["ID"].ToString());
+                        int rankIdx = -1;
+
+                        for (int j = 0; j < rktmp.Count; j++)
+                        {
+                            if (rktmp[j]["ID"].ToString().Equals(json2["ID"].ToString()))
+                            {
+                                rankIdx = j + 1;
+                            }
+                        }
+
+                        myRkData.Add("ranking", rankIdx);
+                        rktmp.Add(myRkData);
+                        _nCmd.Add("MG_" + i, rktmp);
+                    }
+
+                    Send(_nCmd.ToString(), c);
+                }
+
+                break;
             case "UpdateRanking":
                 {
+                    MGDataUpdate(json2["MG_NAME"].ToString() + "_playCount", json2["MG_NAME"].ToString() + "_playCount + 1", json2);
+
+
                     if (!(GetMG1MyScore(json2["MG_NAME"].ToString(), json2["ID"].ToString()).Count > 0))
                     {
                         MGRankInsert(json2["MG_NAME"].ToString(), json2);
@@ -312,11 +399,10 @@ public class Server : MonoBehaviour
                         {
                             //랭킹 점수 업데이트
                             MGRankUpdate(json2["MG_NAME"].ToString(), json2);
+                            MGDataUpdate(json2["MG_NAME"].ToString() + "_maxScore", json2["Score"].ToString(), json2);
 
                         }
                     }
-
-
 
                     JObject _nCmd = new JObject();
                     _nCmd.Add("cmd", "UpdateRanking");
@@ -331,6 +417,11 @@ public class Server : MonoBehaviour
                         {
                             rankIdx = i + 1;
                         }
+                    }
+
+                    if (rankIdx == 1)
+                    {
+                        MGDataUpdate(json2["MG_NAME"].ToString() + "_is1st", "1", json2);
                     }
 
                     myRkData.Add("ranking", rankIdx);
@@ -375,6 +466,29 @@ public class Server : MonoBehaviour
                     _userData.Add("coin2", _info.coin2);
                     Send(_userData.ToString(), c);
 
+                }
+                break;
+
+            case "ArchiveUpdate":
+                {
+                    ArchiveUpdate(json2["ID"].ToString(), json2["ArchiveName"].ToString(), "1");
+                    JObject ret = new JObject();
+                    ret.Add("cmd", "ArchiveUpdate");
+                    ret.Add("ID", json2["ID"].ToString());
+                    ret.Add("List", LoadArchive(json2["ID"].ToString()));
+
+                    Send(ret.ToString(), c);
+                }
+                break;
+
+            case "ArchiveLoad":
+                {
+                    JObject ret = new JObject();
+                    ret.Add("cmd", "ArchiveLoad");
+                    ret.Add("ID", json2["ID"].ToString());
+                    ret.Add("List", LoadArchive(json2["ID"].ToString()));
+
+                    Send(ret.ToString(), c);
                 }
                 break;
 
@@ -515,6 +629,26 @@ public class Server : MonoBehaviour
                     _info.nickName = table["nickName"].ToString();
                     _info.coin1 = table["coin1"].ToString();
                     _info.coin2 = table["coin2"].ToString();
+
+                    _info.MG1PlayData._is1st = table["MG_1_is1st"].ToString().Equals("1");
+                    _info.MG2PlayData._is1st = table["MG_2_is1st"].ToString().Equals("1");
+                    _info.MG3PlayData._is1st = table["MG_3_is1st"].ToString().Equals("1");
+                    _info.MG4PlayData._is1st = table["MG_4_is1st"].ToString().Equals("1");
+                    _info.MG5PlayData._is1st = table["MG_5_is1st"].ToString().Equals("1");
+
+                    _info.MG1PlayData._playCount = int.Parse(table["MG_1_playCount"].ToString());
+                    _info.MG2PlayData._playCount = int.Parse(table["MG_2_playCount"].ToString());
+                    _info.MG3PlayData._playCount = int.Parse(table["MG_3_playCount"].ToString());
+                    _info.MG4PlayData._playCount = int.Parse(table["MG_4_playCount"].ToString());
+                    _info.MG5PlayData._playCount = int.Parse(table["MG_5_playCount"].ToString());
+
+                    _info.MG1PlayData._maxScore = int.Parse(table["MG_1_maxScore"].ToString());
+                    _info.MG2PlayData._maxScore = int.Parse(table["MG_2_maxScore"].ToString());
+                    _info.MG3PlayData._maxScore = int.Parse(table["MG_3_maxScore"].ToString());
+                    _info.MG4PlayData._maxScore = int.Parse(table["MG_4_maxScore"].ToString());
+                    _info.MG5PlayData._maxScore = int.Parse(table["MG_5_maxScore"].ToString());
+
+
                     return _info;
                 }
             }
@@ -550,7 +684,7 @@ public class Server : MonoBehaviour
 
 
                 UserMFInsert(_data);
-
+                UserArchiveInsert(_data);
                 ret = true;
             }
             catch (Exception exc)
@@ -579,6 +713,68 @@ public class Server : MonoBehaviour
         }
 
     }
+
+    public void UserArchiveInsert(JObject _data)
+    {
+
+        try
+        {
+            string _query = string.Format($"INSERT IGNORE INTO archive (ID) VALUES ('{_data["ID"].ToString()}');");
+            MySqlCommand command = GetCommand(_query);
+
+        }
+        catch (Exception exc)
+        {
+
+            SetLog("UserArchiveInsert !!!!!" + exc.Message);
+        }
+
+    }
+    private void ArchiveUpdate(string _id, string _archiveName, string _value)
+    {
+        try
+        {
+            string _query = string.Format($"UPDATE archive SET {_archiveName}='{_value}' WHERE ID='{_id}';");
+            MySqlCommand command = GetCommand(_query);
+
+        }
+        catch (Exception exc)
+        {
+            SetLog("UserNinameUpdate !!!!!" + exc.Message);
+        }
+    }
+
+    private JObject LoadArchive(string _id)
+    {
+        JObject _list = new JObject();
+        try
+        {
+            string _query = string.Format($"SELECT * FROM archive");
+
+            MySqlDataReader table = GetDataReader(_query);
+            while (table.Read())
+            {
+                if (_id.Equals(table["ID"].ToString()))
+                {
+                    for (int i = 1; i < table.FieldCount; i++)
+                    {
+                        _list.Add(table.GetName(i), table[i].ToString());
+                    }
+
+                    break;
+                }
+            }
+
+            table.Close();
+        }
+        catch (Exception exc)
+        {
+            SetLog("LoadArchive !!!!!" + exc.Message);
+        }
+
+        return _list;
+    }
+
     // 유저닉네임 체크
     private bool CheckUserNickName(string _id)
     {
@@ -609,7 +805,7 @@ public class Server : MonoBehaviour
         return ret;
     }
     //닉네임 수정
-    private void UserNinameUpdate(string _id, string _nName)
+    private void UserNicknameUpdate(string _id, string _nName)
     {
         try
         {
@@ -903,7 +1099,7 @@ public class Server : MonoBehaviour
     {
         try
         {
-            string _query = string.Format($"UPDATE {_infoTable} SET {_coinIdx}='{_data[_coinIdx].ToString()}' WHERE ID='{_data["ID"].ToString()}';");
+            string _query = string.Format($"UPDATE {_infoTable} SET {_coinIdx}='{_data["Amount"].ToString()}' WHERE ID='{_data["ID"].ToString()}';");
 
             MySqlCommand command = GetCommand(_query);
         }
@@ -911,5 +1107,61 @@ public class Server : MonoBehaviour
         {
             SetLog("MGRankUpdate !!!!!" + exc.Message);
         }
+    }
+
+    private void MGDataUpdate(string _gameName, string _value, JObject _data)
+    {
+        try
+        {
+            string _query = string.Format($"UPDATE {_infoTable} SET {_gameName}={_value} WHERE ID='{_data["ID"].ToString()}';");
+
+            MySqlCommand command = GetCommand(_query);
+        }
+        catch (Exception exc)
+        {
+            SetLog("MGDataUpdate !!!!!" + exc.Message);
+        }
+    }
+
+    public JArray MGDataLoad(userData _info)
+    {
+        JArray _MGArr = new JArray();
+
+        JObject _mg1Data = new JObject();
+        _mg1Data.Add("MG_Name", "MG_1");
+        _mg1Data.Add("_is1st", _info.MG1PlayData._is1st);
+        _mg1Data.Add("_playCount", _info.MG1PlayData._playCount);
+        _mg1Data.Add("_maxScore", _info.MG1PlayData._maxScore);
+        _MGArr.Add(_mg1Data);
+
+        JObject _mg2Data = new JObject();
+        _mg2Data.Add("MG_Name", "MG_2");
+        _mg2Data.Add("_is1st", _info.MG2PlayData._is1st);
+        _mg2Data.Add("_playCount", _info.MG2PlayData._playCount);
+        _mg2Data.Add("_maxScore", _info.MG2PlayData._maxScore);
+        _MGArr.Add(_mg2Data);
+
+        JObject _mg3Data = new JObject();
+        _mg3Data.Add("MG_Name", "MG_3");
+        _mg3Data.Add("_is1st", _info.MG3PlayData._is1st);
+        _mg3Data.Add("_playCount", _info.MG3PlayData._playCount);
+        _mg3Data.Add("_maxScore", _info.MG3PlayData._maxScore);
+        _MGArr.Add(_mg3Data);
+
+        JObject _mg4Data = new JObject();
+        _mg4Data.Add("MG_Name", "MG_4");
+        _mg4Data.Add("_is1st", _info.MG4PlayData._is1st);
+        _mg4Data.Add("_playCount", _info.MG4PlayData._playCount);
+        _mg4Data.Add("_maxScore", _info.MG4PlayData._maxScore);
+        _MGArr.Add(_mg4Data);
+
+        JObject _mg5Data = new JObject();
+        _mg5Data.Add("MG_Name", "MG_5");
+        _mg5Data.Add("_is1st", _info.MG5PlayData._is1st);
+        _mg5Data.Add("_playCount", _info.MG5PlayData._playCount);
+        _mg5Data.Add("_maxScore", _info.MG5PlayData._maxScore);
+        _MGArr.Add(_mg5Data);
+
+        return _MGArr;
     }
 }
